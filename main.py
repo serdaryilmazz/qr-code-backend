@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from database import get_connection, init_db
 
@@ -35,6 +35,7 @@ class AnswerItem(BaseModel):
 
 
 class SubmitSurveyRequest(BaseModel):
+    session_id: str = Field(alias="sessionId")
     answers: list[AnswerItem]
 
 
@@ -155,20 +156,42 @@ def submit_survey(data: SubmitSurveyRequest):
     if not data.answers:
         raise HTTPException(status_code=400, detail="Cevap listesi bos olamaz.")
 
+    try:
+        uuid.UUID(data.session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Gecersiz sessionId.") from exc
+
     conn = get_connection()
     cursor = conn.cursor()
-    session_id = str(uuid.uuid4())
 
     try:
+        cursor.execute(
+            """
+            SELECT 1
+            FROM survey_answers
+            WHERE session_id = %s
+            LIMIT 1
+            """,
+            (data.session_id,),
+        )
+        if cursor.fetchone():
+            raise HTTPException(
+                status_code=409,
+                detail="Bu sessionId ile anket zaten gonderilmis.",
+            )
+
         for answer in data.answers:
             cursor.execute(
                 """
                 INSERT INTO survey_answers (question_id, answer_text, session_id)
                 VALUES (%s, %s, %s)
                 """,
-                (answer.question_id, answer.answer_text, session_id),
+                (answer.question_id, answer.answer_text, data.session_id),
             )
         conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
     except Exception as exc:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(exc))
@@ -178,5 +201,5 @@ def submit_survey(data: SubmitSurveyRequest):
     return {
         "message": "Cevaplar basariyla kaydedildi.",
         "count": len(data.answers),
-        "sessionId": session_id,
+        "sessionId": data.session_id,
     }
