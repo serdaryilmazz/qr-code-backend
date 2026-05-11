@@ -15,6 +15,16 @@ app.add_middleware(
 )
 
 
+@app.get("/")
+def read_root():
+    return {"status": "ok", "service": "qr-code-backend"}
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+
+
 # --- Şemalar ---
 
 class AnswerItem(BaseModel):
