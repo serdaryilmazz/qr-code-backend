@@ -68,7 +68,7 @@ def get_questions():
         cursor.execute("""
             SELECT id, question_text, question_type, input_type, options, placeholder
             FROM questions
-            WHERE is_active = 1
+            WHERE is_active = TRUE
             ORDER BY sort_order ASC
         """)
         questions = cursor.fetchall()
@@ -144,7 +144,7 @@ def submit_survey(data: SubmitSurveyRequest):
     try:
         for answer in data.answers:
             cursor.execute(
-                "INSERT INTO survey_answers (question_id, answer_text) VALUES (?, ?)",
+                "INSERT INTO survey_answers (question_id, answer_text) VALUES (%s, %s)",
                 (answer.question_id, answer.answer_text),
             )
         conn.commit()

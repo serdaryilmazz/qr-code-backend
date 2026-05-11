@@ -1,16 +1,18 @@
-import sqlite3
 import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
 
-DB_PATH = os.getenv("DATABASE_PATH", os.path.join(os.path.dirname(__file__), "survey.db"))
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is not set!")
 
 
 def get_connection():
-    db_dir = os.path.dirname(DB_PATH)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
-
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    """PostgreSQL bağlantısı döndürür."""
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     return conn
 
 
@@ -22,14 +24,14 @@ def init_db():
     # Sorular tablosu
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS questions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             question_text TEXT NOT NULL,
             question_type TEXT NOT NULL,
             input_type TEXT,
             options TEXT,
             placeholder TEXT,
             sort_order INTEGER NOT NULL DEFAULT 0,
-            is_active INTEGER DEFAULT 1,
+            is_active BOOLEAN DEFAULT TRUE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -37,17 +39,16 @@ def init_db():
     # Cevaplar tablosu
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS survey_answers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            question_id INTEGER NOT NULL,
+            id SERIAL PRIMARY KEY,
+            question_id INTEGER NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
             answer_text TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
     # Eğer sorular tablosu boşsa, varsayılan soruları ekle
-    cursor.execute("SELECT COUNT(*) FROM questions")
-    if cursor.fetchone()[0] == 0:
+    cursor.execute("SELECT COUNT(*) AS count FROM questions")
+    if cursor.fetchone()["count"] == 0:
         questions = [
             ("Kaç yaşındasınız?", "input", "number", None, "Yaşınızı giriniz...", 1),
             ("Cinsiyetiniz nedir?", "select", None, '["Erkek", "Kadın"]', None, 2),
@@ -55,9 +56,10 @@ def init_db():
             ("Hangi alanda ilgileniyorsunuz?", "select", None, '["Yapay Zeka / Makine Öğrenmesi", "Web / Mobil Geliştirme", "Siber Güvenlik", "Veri Bilimi", "Diğer"]', None, 4),
         ]
         cursor.executemany(
-            "INSERT INTO questions (question_text, question_type, input_type, options, placeholder, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO questions (question_text, question_type, input_type, options, placeholder, sort_order) VALUES (%s, %s, %s, %s, %s, %s)",
             questions,
         )
 
     conn.commit()
+    cursor.close()
     conn.close()
