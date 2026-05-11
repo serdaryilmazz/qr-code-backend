@@ -1,14 +1,15 @@
 import json
+import uuid
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
 from database import get_connection, init_db
 
 app = FastAPI(title="Survey API")
 
-# CORS - Frontend'in backend'e istek atabilmesi için
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,8 +29,6 @@ def health_check():
     return {"status": "healthy"}
 
 
-# --- Şemalar ---
-
 class AnswerItem(BaseModel):
     question_id: int
     answer_text: str
@@ -39,14 +38,10 @@ class SubmitSurveyRequest(BaseModel):
     answers: list[AnswerItem]
 
 
-# --- Uygulama başlatıldığında DB'yi oluştur ---
-
 @app.on_event("startup")
 def startup():
     init_db()
 
-
-# --- Endpoint ---
 
 def parse_options(options: Optional[str]):
     if options is None:
@@ -60,17 +55,18 @@ def parse_options(options: Optional[str]):
 
 @app.get("/api/questions")
 def get_questions():
-    """Aktif soruları sıralı şekilde döndürür."""
     conn = get_connection()
     cursor = conn.cursor()
 
     try:
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id, question_text, question_type, input_type, options, placeholder
             FROM questions
             WHERE is_active = TRUE
             ORDER BY sort_order ASC
-        """)
+            """
+        )
         questions = cursor.fetchall()
     finally:
         conn.close()
@@ -90,15 +86,16 @@ def get_questions():
 
 @app.get("/api/answers")
 def get_answers():
-    """Tüm cevapları ilişkili soru bilgileriyle döndürür."""
     conn = get_connection()
     cursor = conn.cursor()
 
     try:
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT
                 survey_answers.id AS id,
                 survey_answers.answer_text AS answer_text,
+                survey_answers.session_id AS session_id,
                 survey_answers.created_at AS created_at,
                 questions.id AS question_id,
                 questions.question_text AS question_text,
@@ -109,7 +106,8 @@ def get_answers():
             FROM survey_answers
             INNER JOIN questions ON survey_answers.question_id = questions.id
             ORDER BY survey_answers.created_at DESC, survey_answers.id DESC
-        """)
+            """
+        )
         answers = cursor.fetchall()
     finally:
         conn.close()
@@ -118,6 +116,7 @@ def get_answers():
         {
             "id": answer["id"],
             "answer": answer["answer_text"],
+            "sessionId": answer["session_id"],
             "createdAt": answer["created_at"],
             "question": {
                 "id": answer["question_id"],
@@ -132,26 +131,52 @@ def get_answers():
     ]
 
 
-@app.post("/api/submit")
-def submit_survey(data: SubmitSurveyRequest):
-    """Anket cevaplarını veritabanına kaydeder."""
-    if not data.answers:
-        raise HTTPException(status_code=400, detail="Cevap listesi boş olamaz.")
-
+@app.get("/api/participants/count")
+def get_participants_count():
     conn = get_connection()
     cursor = conn.cursor()
 
     try:
-        for answer in data.answers:
-            cursor.execute(
-                "INSERT INTO survey_answers (question_id, answer_text) VALUES (%s, %s)",
-                (answer.question_id, answer.answer_text),
-            )
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        cursor.execute(
+            """
+            SELECT COUNT(DISTINCT session_id) AS total_participants
+            FROM survey_answers
+            """
+        )
+        result = cursor.fetchone()
     finally:
         conn.close()
 
-    return {"message": "Cevaplar başarıyla kaydedildi.", "count": len(data.answers)}
+    return {"totalParticipants": result["total_participants"]}
+
+
+@app.post("/api/submit")
+def submit_survey(data: SubmitSurveyRequest):
+    if not data.answers:
+        raise HTTPException(status_code=400, detail="Cevap listesi bos olamaz.")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    session_id = str(uuid.uuid4())
+
+    try:
+        for answer in data.answers:
+            cursor.execute(
+                """
+                INSERT INTO survey_answers (question_id, answer_text, session_id)
+                VALUES (%s, %s, %s)
+                """,
+                (answer.question_id, answer.answer_text, session_id),
+            )
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        conn.close()
+
+    return {
+        "message": "Cevaplar basariyla kaydedildi.",
+        "count": len(data.answers),
+        "sessionId": session_id,
+    }

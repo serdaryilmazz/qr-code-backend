@@ -1,7 +1,8 @@
 import os
+
 import psycopg2
-from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
+from psycopg2.extras import RealDictCursor
 
 load_dotenv()
 
@@ -42,8 +43,25 @@ def init_db():
             id SERIAL PRIMARY KEY,
             question_id INTEGER NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
             answer_text TEXT NOT NULL,
+            session_id TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
+    """)
+
+    cursor.execute("""
+        ALTER TABLE survey_answers
+        ADD COLUMN IF NOT EXISTS session_id TEXT
+    """)
+
+    cursor.execute("""
+        UPDATE survey_answers
+        SET session_id = CONCAT('legacy-', id)
+        WHERE session_id IS NULL
+    """)
+
+    cursor.execute("""
+        ALTER TABLE survey_answers
+        ALTER COLUMN session_id SET NOT NULL
     """)
 
     # Eğer sorular tablosu boşsa, varsayılan soruları ekle
