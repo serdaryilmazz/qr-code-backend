@@ -1,4 +1,5 @@
 import json
+import os
 import uuid
 from typing import Optional
 
@@ -8,12 +9,24 @@ from pydantic import BaseModel, Field
 
 from database import get_connection, init_db
 
+
+def get_cors_origins() -> list[str]:
+    raw_origins = os.getenv("CORS_ALLOW_ORIGINS", "*").strip()
+    if not raw_origins:
+        return ["*"]
+
+    return [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+
+
+cors_origins = get_cors_origins()
+allow_all_origins = cors_origins == ["*"]
+
 app = FastAPI(title="Survey API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=not allow_all_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
